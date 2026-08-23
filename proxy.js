@@ -6129,9 +6129,9 @@ function detectUpstreamProtocol(acct, targetUrl, mod) {
     // no-such-route code (404/405). Invalid but recognized bodies (400) still
     // prove the protocol is supported without billing a real completion.
     probe("/v1/messages", { model: "claude-sonnet-4-5", messages: [], max_tokens: 1, stream: false }, (messagesStatus) => {
-      if (messagesStatus != null && messagesStatus !== 404 && messagesStatus !== 405) { resolve("messages"); return; }
+      if (messagesStatus != null && messagesStatus !== 404 && messagesStatus !== 405 && messagesStatus !== 403 && messagesStatus !== 402) { resolve("messages"); return; }
       probe("/v1/responses", { model: "gpt-4o", input: [], stream: false }, (responsesStatus) => {
-        if (responsesStatus != null && responsesStatus !== 404 && responsesStatus !== 405) { resolve("responses"); return; }
+        if (responsesStatus != null && responsesStatus !== 404 && responsesStatus !== 405 && responsesStatus !== 403 && responsesStatus !== 402) { resolve("responses"); return; }
         resolve("chat");
       });
     });
@@ -15863,24 +15863,6 @@ function createGroupServer(groupName, port) {
       res.writeHead(400, cors);
       res.end(JSON.stringify({ error: "Missing Authorization header" }));
       return;
-    }
-    if (config.networkMode === "lan" && config.lanApiKey) {
-      const remote = req.socket.remoteAddress || "";
-      const isLocalhost = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
-      if (!isLocalhost) {
-        const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-        let match = false;
-        if (token.length === config.lanApiKey.length && token.length > 0) {
-          let diff = 0;
-          for (let i = 0; i < token.length; i++) diff |= token.charCodeAt(i) ^ config.lanApiKey.charCodeAt(i);
-          match = diff === 0;
-        }
-        if (!match) {
-          res.writeHead(401, cors);
-          res.end(JSON.stringify({ error: "Invalid API key for LAN access" }));
-          return;
-        }
-      }
     }
     console.log(`[proxy] ${req.method} ${pathname} (group ${groupName})`);
     let nativeResponsesProbe = null;

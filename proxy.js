@@ -5703,9 +5703,9 @@ function pickKey(model, group) {
         continue;
       }
       const avail = g.filter(i => !inCooldown(i) && rateLimitAllow(i));
-      const pool = avail.length ? avail : g;
-      if (_rrCursor >= pool.length) _rrCursor = 0;
-      return pool[_rrCursor++];
+      if (!avail.length) continue;
+      if (_rrCursor >= avail.length) _rrCursor = 0;
+      return avail[_rrCursor++];
     }
     return -1;
   }
@@ -5728,7 +5728,6 @@ function pickKey(model, group) {
     const a = g.filter(i => !inCooldown(i) && rateLimitAllow(i));
     if (a.length) return a[0];
   }
-  for (const g of groups) if (g.length) return g[0];
   return -1;
 }
 

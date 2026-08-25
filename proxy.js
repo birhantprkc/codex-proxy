@@ -6104,11 +6104,14 @@ function refreshUpstreamCapabilities() {
 function detectUpstreamProtocol(acct, targetUrl, mod) {
   return new Promise((resolve) => {
     let finished = false;
+    const base = targetUrl.pathname.replace(/\/+$/, "");
+    const baseHasV1 = /\/v1\/?$/.test(base);
+    const probePath = (p) => baseHasV1 ? base.slice(0, -3) + p : base + p;
     const probe = (path, body, done) => {
       const opts = {
         hostname: targetUrl.hostname,
         port: targetUrl.port || (targetUrl.protocol === "http:" ? 80 : 443),
-        path,
+        path: probePath(path),
         method: "POST",
         headers: { authorization: "Bearer " + acct.key, "content-type": "application/json", "user-agent": "codex-proxy/3" },
         timeout: 6000,
@@ -6145,7 +6148,7 @@ function doProbeUpstream(acct) {
     const opts = {
       hostname: targetUrl.hostname,
       port: targetUrl.port || (targetUrl.protocol === "http:" ? 80 : 443),
-      path: "/v1/models",
+      path: (function() { const b = targetUrl.pathname.replace(/\/+$/,""); const baseHasV1 = /\/v1\/?$/.test(b); return baseHasV1 ? b.slice(0,-3) + "/v1/models" : b + "/v1/models"; })(),
       method: "GET",
       headers: { authorization: "Bearer " + acct.key, "content-type": "application/json", "user-agent": "codex-proxy/3" },
       timeout: 8000,

@@ -6332,7 +6332,13 @@ function forwardRequest(idx, method, headers, body, clientRes, pathname, onDone,
   const options = {
     hostname: targetUrl.hostname,
     port: targetUrl.port || (targetUrl.protocol === "http:" ? 80 : 443),
-    path: targetUrl.pathname.replace(/\/+$/, "") + pathname,
+    path: (() => {
+      const base = targetUrl.pathname.replace(/\/+$/, "");
+      const baseHasV1 = /\/v1\/?$/.test(base);
+      const clientHasV1 = /^\/v1(\/|$)/.test(pathname);
+      if (baseHasV1 && clientHasV1) return base + pathname.slice(3);
+      return base + pathname;
+    })(),
     method,
     headers: reqHeaders,
     timeout: upstreamIdleTimeout,

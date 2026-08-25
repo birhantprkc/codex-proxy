@@ -1564,6 +1564,7 @@ A: 未修改的官方 Release 资产会自动识别版本；源码安装（克�
 
 ## 更新日志
 
+- **2026-08-12 Responses SSE 流式协议合规改进**：大幅改进 Responses 流式生命周期——新增 `openMessageItem` / `closeMessageItem` 消息项生命周期管理，持久 `outputItems` 追踪与正确 `output_index` 分配，`_itemClosed` 标志防止重复关闭事件，`toolCallNames` / `toolOutputIndices` 工具调用追踪，所有文本 delta 事件包含 `item_id`、`output_index`、`content_index` 字段，`response.output_text.done` 事件使用完整 outputItems 列表。移除裸路径归一化（客户端应使用标准 `/v1/...` 路径）。
 - **2026-08-12 更新弹窗安全提示展示时机与备份清单微调**：安全升级步骤改为仅在 GitHub 存在新版本时展示；本机已是最新或来源未知时，弹窗只显示“一键升级已禁用，避免覆盖本地代码、配置或运行状态。”单句提示。备份步骤明确列出 `keys.json`（可能含 API Key 与上游地址等敏感信息，禁止上传到 GitHub/Release 或公开），与 `config.json`、`state.json` 一并备份。中英文翻译键同步更新。
 
 - **2026-08-12 更新弹窗安全步骤展示条件与 Release 说明渲染修正**：修正上一版“仅在发现更新或本地来源未知时才显示完整安全升级步骤”的判断——现在只要成功获取 Release 信息（无论已是最新还是有更新），版本更新弹窗都完整展示五步安全升级流程与「GitHub 升级说明」入口；仅当 Release 获取失败时才退回单句禁用提示。另将 Release 更新说明由 `<pre>` 纯文本改为受限 Markdown 渲染（支持标题、无序列表、代码标记与 `https://` 链接），渲染前先 HTML 转义、仅放行 http/https 链接，杜绝 Release 内容注入 HTML/脚本；超长内容仍保留滚动查看。同步更新 README 对应说明。

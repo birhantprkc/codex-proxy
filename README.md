@@ -106,7 +106,12 @@ Point an OpenAI-compatible client at `http://localhost:3456/v1`. Add groups such
 
 ## Evolution
 
-This timeline records every tagged release from `v2.26.0` through `v2.57.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+This timeline records every tagged release from `v2.26.0` through `v2.58.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+
+### v2.58.0 📡 Responses SSE streaming protocol compliance
+- 🇬🇧 **English:** Major overhaul of Responses SSE streaming lifecycle: added proper `output_item.added` / `output_item.done` message item lifecycle with `openMessageItem` / `closeMessageItem`, persistent `outputItems` tracking with correct `output_index` assignment, `_itemClosed` flag to prevent duplicate close events, `toolCallNames` / `toolOutputIndices` for tool call tracking, and `item_id` / `output_index` / `content_index` fields in all text delta events. Bare path normalization removed; clients should use standard `/v1/...` paths.
+- 🇨🇳 **中文：** 大幅改进 Responses SSE 流式生命周期：新增 `output_item.added` / `output_item.done` 消息项生命周期（`openMessageItem` / `closeMessageItem`）、持久 `outputItems` 追踪与正确 `output_index` 分配、`_itemClosed` 标志防止重复关闭、`toolCallNames` / `toolOutputIndices` 工具调用追踪、所有文本 delta 事件包含 `item_id` / `output_index` / `content_index` 字段。移除裸路径归一化，客户端应使用标准 `/v1/...` 路径。
+- 🔗 [Full changelog](README_CN.md#更新日志)
 
 ### v2.57.0 🌐 LAN access mode
 - 🇬🇧 **English:** Added network mode setting (localhost / LAN) and LAN API key protection, allowing other devices on the same LAN to use this proxy for AI requests. Dashboard settings panel includes mode selection and key input; saving automatically restarts all port groups to apply the new bind address. LAN clients authenticate via Bearer token constant-time comparison. Local requests always bypass the LAN key.

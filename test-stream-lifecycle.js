@@ -148,8 +148,12 @@ async function testCompletedStream(harness) {
   assert.deepStrictEqual(eventNames(output), [
     "response.created",
     "response.in_progress",
+    "response.output_item.added",
+    "response.content_part.added",
     "response.output_text.delta",
     "response.output_text.done",
+    "response.content_part.done",
+    "response.output_item.done",
     "response.completed",
   ]);
   assert.match(output, /data: \[DONE\]\n\n$/);

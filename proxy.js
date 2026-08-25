@@ -12073,7 +12073,10 @@ function createResponsesLifecycle(model) {
       if (!this._started) this.emitStart();
       this.terminalKind = "completed";
       this.terminalReason = normalizeStreamTerminalReason(reason, "upstream_done");
-      this._pushEvent("response.output_text.done", { type: "response.output_text.done", delta: "" });
+      if (!this._itemClosed) this._pushEvent("response.output_text.done", { type: "response.output_text.done", delta: "" });
+      const outputItems = (this._outputItems && this._outputItems.length)
+        ? this._outputItems.slice().sort((a, b) => a.output_index - b.output_index).map(e => e.item)
+        : [{ type: "message", role: "assistant", content: [{ type: "output_text", text: this.fullContent }] }];
       this._pushEvent("response.completed", {
         type: "response.completed",
         response: {
@@ -12082,7 +12085,7 @@ function createResponsesLifecycle(model) {
           created_at: this.created,
           model: this.model,
           status: "completed",
-          output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: this.fullContent }] }],
+          output: outputItems,
           usage: { input_tokens: this.inputTokens, output_tokens: this.outputTokens, total_tokens: this.inputTokens + this.outputTokens },
         },
       });
@@ -12687,13 +12690,46 @@ function createChatToResponsesStream(lifecycle) {
   const seenToolCalls = new Set();
   const toolCallArgs = {};
   const toolCallIds = {};
+  const toolCallNames = {};
+  const toolOutputIndices = {};
+  let msgItemId = null;
+  let msgOutputIndex = 0;
+  let msgClosed = false;
+  let nextOutputIndex = 0;
+
+  const openMessageItem = output => {
+    if (msgItemId) return;
+    msgItemId = "msg_" + Math.random().toString(36).slice(2, 12);
+    msgOutputIndex = nextOutputIndex++;
+    output.push(`event: response.output_item.added\ndata: ${JSON.stringify({type:"response.output_item.added",output_index:msgOutputIndex,item:{id:msgItemId,type:"message",role:"assistant",status:"in_progress",content:[]}})}\n\n`);
+    output.push(`event: response.content_part.added\ndata: ${JSON.stringify({type:"response.content_part.added",item_id:msgItemId,output_index:msgOutputIndex,content_index:0,part:{type:"output_text",text:"",annotations:[]}})}\n\n`);
+  };
+
+  const closeMessageItem = output => {
+    if (!msgItemId || msgClosed) return;
+    msgClosed = true;
+    const text = lifecycle.fullContent || "";
+    output.push(`event: response.output_text.done\ndata: ${JSON.stringify({type:"response.output_text.done",item_id:msgItemId,output_index:msgOutputIndex,content_index:0,text,annotations:[]})}\n\n`);
+    output.push(`event: response.content_part.done\ndata: ${JSON.stringify({type:"response.content_part.done",item_id:msgItemId,output_index:msgOutputIndex,content_index:0,part:{type:"output_text",text,annotations:[]}})}\n\n`);
+    output.push(`event: response.output_item.done\ndata: ${JSON.stringify({type:"response.output_item.done",output_index:msgOutputIndex,item:{id:msgItemId,type:"message",role:"assistant",status:"completed",content:[{type:"output_text",text,annotations:[]}]}})}\n\n`);
+    if (lifecycle) {
+      lifecycle._itemClosed = true;
+      if (!lifecycle._outputItems) lifecycle._outputItems = [];
+      lifecycle._outputItems.push({ output_index: msgOutputIndex, item: { id: msgItemId, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] } });
+    }
+  };
 
   const finishToolCalls = output => {
     for (const callIdx of seenToolCalls) {
       const callId = toolCallIds[callIdx];
       if (callId && toolCallArgs[callIdx] !== undefined) {
-        output.push(`event: response.function_call_arguments.done\ndata: ${JSON.stringify({type:"response.function_call_arguments.done",arguments:toolCallArgs[callIdx],item_id:callId,output_index:callIdx})}\n\n`);
-        output.push(`event: response.output_item.done\ndata: ${JSON.stringify({type:"response.output_item.done",output_index:callIdx,item:{type:"function_call",id:callId,name:"",arguments:toolCallArgs[callIdx],status:"completed"}})}\n\n`);
+        const outIdx = toolOutputIndices[callIdx];
+        output.push(`event: response.function_call_arguments.done\ndata: ${JSON.stringify({type:"response.function_call_arguments.done",arguments:toolCallArgs[callIdx],item_id:callId,output_index:outIdx})}\n\n`);
+        output.push(`event: response.output_item.done\ndata: ${JSON.stringify({type:"response.output_item.done",output_index:outIdx,item:{type:"function_call",id:callId,call_id:callId,name:toolCallNames[callIdx] || "",arguments:toolCallArgs[callIdx],status:"completed"}})}\n\n`);
+        if (lifecycle) {
+          if (!lifecycle._outputItems) lifecycle._outputItems = [];
+          lifecycle._outputItems.push({ output_index: outIdx, item: { type: "function_call", id: callId, call_id: callId, name: toolCallNames[callIdx] || "", arguments: toolCallArgs[callIdx], status: "completed" } });
+        }
         delete toolCallArgs[callIdx];
       }
     }
@@ -12722,11 +12758,13 @@ function createChatToResponsesStream(lifecycle) {
     const delta = parsed.choices?.[0]?.delta;
     if (delta?.reasoning_content) {
       lifecycle.fullContent += delta.reasoning_content;
-      output.push(`event: response.output_text.delta\ndata: ${JSON.stringify({type:"response.output_text.delta",delta:delta.reasoning_content})}\n\n`);
+      openMessageItem(output);
+      output.push(`event: response.output_text.delta\ndata: ${JSON.stringify({type:"response.output_text.delta",delta:delta.reasoning_content,item_id:msgItemId,output_index:msgOutputIndex,content_index:0})}\n\n`);
     }
     if (delta?.content) {
       lifecycle.fullContent += delta.content;
-      output.push(`event: response.output_text.delta\ndata: ${JSON.stringify({type:"response.output_text.delta",delta:delta.content})}\n\n`);
+      openMessageItem(output);
+      output.push(`event: response.output_text.delta\ndata: ${JSON.stringify({type:"response.output_text.delta",delta:delta.content,item_id:msgItemId,output_index:msgOutputIndex,content_index:0})}\n\n`);
     }
     if (delta?.tool_calls) {
       for (const tc of delta.tool_calls) {
@@ -12735,13 +12773,17 @@ function createChatToResponsesStream(lifecycle) {
           seenToolCalls.add(callIdx);
           toolCallArgs[callIdx] = "";
           toolCallIds[callIdx] = tc.id || ("call_" + callIdx + "_" + Date.now().toString(36));
+          toolCallNames[callIdx] = tc.function?.name || "";
+          toolOutputIndices[callIdx] = nextOutputIndex++;
+          const outIdx = toolOutputIndices[callIdx];
           const fnName = tc.function?.name || "";
-          output.push(`event: response.output_item.added\ndata: ${JSON.stringify({type:"response.output_item.added",output_index:callIdx,item:{type:"function_call",id:toolCallIds[callIdx],name:fnName,arguments:"",status:"in_progress"}})}\n\n`);
-          output.push(`event: response.function_call_arguments.starting\ndata: ${JSON.stringify({type:"response.function_call_arguments.starting",item_id:toolCallIds[callIdx],output_index:callIdx})}\n\n`);
+          output.push(`event: response.output_item.added\ndata: ${JSON.stringify({type:"response.output_item.added",output_index:outIdx,item:{type:"function_call",id:toolCallIds[callIdx],call_id:toolCallIds[callIdx],name:fnName,arguments:"",status:"in_progress"}})}\n\n`);
+          output.push(`event: response.function_call_arguments.starting\ndata: ${JSON.stringify({type:"response.function_call_arguments.starting",item_id:toolCallIds[callIdx],output_index:outIdx})}\n\n`);
         }
         const args = tc.function?.arguments || "";
         toolCallArgs[callIdx] += args;
-        output.push(`event: response.function_call_arguments.delta\ndata: ${JSON.stringify({type:"response.function_call_arguments.delta",delta:args,item_id:toolCallIds[callIdx],output_index:callIdx})}\n\n`);
+        const outIdx = toolOutputIndices[callIdx];
+        output.push(`event: response.function_call_arguments.delta\ndata: ${JSON.stringify({type:"response.function_call_arguments.delta",delta:args,item_id:toolCallIds[callIdx],output_index:outIdx})}\n\n`);
       }
     }
     if (parsed.choices?.[0]?.finish_reason === "tool_calls") finishToolCalls(output);
@@ -12769,6 +12811,7 @@ function createChatToResponsesStream(lifecycle) {
       buffer = "";
       if (!lifecycle.terminalKind) {
         finishToolCalls(this);
+        closeMessageItem(this);
         if (lifecycle.sawDone) lifecycle.emitCompleted("upstream_done");
         else lifecycle.emitFailed("upstream_eof_without_done");
       }
@@ -14355,12 +14398,7 @@ function forwardChatCompletions(method, chatHeaders, chatBody, msgsHeaders, msgs
 // --- HTTP Server ---
 function createGroupServer(groupName, port) {
   const server = http.createServer((req, res) => {
-  const _rawPathname = (req.url || "/").split("?")[0];
-  const pathname =
-    _rawPathname === "/responses" || _rawPathname === "/messages" ||
-    _rawPathname === "/chat/completions" || _rawPathname === "/models"
-      ? "/v1" + _rawPathname
-      : _rawPathname;
+  const pathname = (req.url || "/").split("?")[0];
   if (groupName !== "A" && (pathname.startsWith("/__") || pathname === "/" || pathname === "/dashboard" || pathname === "/metrics")) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "Admin panel only on primary port (A)" }));

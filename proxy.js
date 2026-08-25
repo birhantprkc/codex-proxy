@@ -14355,7 +14355,12 @@ function forwardChatCompletions(method, chatHeaders, chatBody, msgsHeaders, msgs
 // --- HTTP Server ---
 function createGroupServer(groupName, port) {
   const server = http.createServer((req, res) => {
-  const pathname = (req.url || "/").split("?")[0];
+  const _rawPathname = (req.url || "/").split("?")[0];
+  const pathname =
+    _rawPathname === "/responses" || _rawPathname === "/messages" ||
+    _rawPathname === "/chat/completions" || _rawPathname === "/models"
+      ? "/v1" + _rawPathname
+      : _rawPathname;
   if (groupName !== "A" && (pathname.startsWith("/__") || pathname === "/" || pathname === "/dashboard" || pathname === "/metrics")) {
     res.writeHead(404, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "Admin panel only on primary port (A)" }));

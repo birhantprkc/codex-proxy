@@ -146,7 +146,7 @@ cd /path/to/codex-proxy
 npm install
 
 # 编辑 keys.json，填入你的 API Key
-#   key:    API 密钥，必须以 sk- 开头
+#   key:    API 密钥（支持任意前缀，如 sk-xxx 或其他格式）
 #   url:    中转地址（http/https，每个 key 可不同）
 #   reset:  额度重置周期 daily / weekly / never
 #   remark: 备注（可选）
@@ -669,6 +669,7 @@ Webhook URL、价格参数、桌面通知/声音开关、🔄 自动恢复冷却
 - `/v1/chat/completions` 路由的多协议池判定同样使用动态协议：组内任一账号（静态白名单或动态探测）被识别为 Messages / Responses 上游，即自动启用 Chat→Messages / Chat→Responses 转换回退，无需在 `url` 上显式标记
 - 同协议上游优先透传（字节直通 / 终态保护），跨协议才做转换，避免无谓重写；协议池顺序：下游 Chat → `chat, messages, responses`；下游 Messages → `messages, chat, responses`；下游 Responses → `responses, chat, messages`
 - 任一 Key 失败自动切换到池内下一协议的下游 Key 重试，`#N` 强制指定 Key、boost/轮询、冷却与容量重排队照常生效
+- 上游返回「路径/协议不支持」类错误（如 anytokens 的 `does not allow /v1/messages dispatch`）时归类为 `unsupported_path`：错误如实回传调用方，但**不写入 Key 的 `failCode`**，不冷却、不锁定、不判失效——即使局域网其他设备或本机应用用错协议，也不会污染共享 Key，其他正常任务不受影响
 - 转换同时支持**流式与非流式**：跨协议时流式 body 强制 `stream:true`，响应经 SSE 转换器回写；非流式请求走一次性 JSON 响应转换器
 - 转换字段覆盖：文本、system/instructions、工具定义与调用链（`tool_use`↔`function_call`）、思考内容（`thinking`↔`reasoning`↔`reasoning_content`）、图片、usage 统计
 
@@ -1533,6 +1534,9 @@ A: 前端删除是软删除（设 `status="deleted"`），Key 仍在 keys.json�
 **Q: Key 被自动锁死了怎么恢复？**
 A: 管理弹窗找到 🔒 锁死的 Key，点击 🔓 解锁按钮，或手动调用 `POST /__reset-key {"idx": N}`。可在配置中关闭自动锁死（取消勾选「启用自动锁死」）或调整阈值 `lockAfterFailCount`。
 
+**Q: 局域网其他设备（或本机应用）用了上游不支持的协议/路径，会不会把 Key 搞失效？**
+A: 不会。当某 Key 的上游返回类似 `does not allow /v1/messages dispatch` 的「路径/协议不支持」错误（典型场景：把 Anthropic Messages 请求发到仅支持 OpenAI 协议的上游，或局域网/本机客户端配置了错误连接方式）时，代理会将其归类为 `unsupported_path`：请求仍会如实转发、并把上游错误（如 403）原样返回给调用方使其正确感知失败，但**不会**将该错误记为 Key 的 `failCode`，因此不会进入冷却、不会触发自动锁定、也不会被 `reset:"never"` 的 Key 判定为失效——共享该 Key 的其他正常任务（含本机 codex）完全不受影响。真正的 Key 失效（如 401 认证失败、余额不足等）仍会正常触发冷却与锁定。
+
 **Q: 费用估算不准？**
 A: 先调整全局 `bytesPerToken` 和 `prices`；不同模型 token 密度不同，可用 `modelPricing` 为模型设置精确名称的单独单价和 `bytesPerToken`。这仍是字节估算，改价不会回算历史费用。
 
@@ -1563,6 +1567,8 @@ A: 未修改的官方 Release 资产会自动识别版本；源码安装（克�
 | [@anupamme](https://github.com/anupamme) | 提出管理 Token 不应保存于浏览器会话存储的安全改进思路（PR [#1](https://github.com/aipayim/codex-proxy/pull/1)）。当前版本在最新代码上完成了内存态适配，并补齐 WebSocket 认证路径。 |
 
 ## 更新日志
+
+- **2026-08-27 上游路径/协议不支持不再影响 Key 状态**：上游返回「路径/协议不支持」类错误（如 anytokens 的 `does not allow /v1/messages dispatch`，常见于局域网其他设备或本机应用用 Anthropic Messages 协议请求仅支持 OpenAI 协议的上游）时，代理新增 `unsupported_path` 错误分类。这类错误不再调用 `markFailure` 写入 `failCode`，因此不会使 Key 进入冷却、不会触发自动锁定，也不会让 `reset:"never"` 的 Key 被误判失效——共享 Key 的其他正常任务不受影响。请求仍如实转发、上游错误原样回传给调用方使其正确感知失败。真正的 Key 失效（401 认证失败、余额不足等）仍按原逻辑冷却与锁定。更新 FAQ 与协议转换说明。
 
 - **2026-08-12 Responses SSE 流式协议合规改进**：大幅改进 Responses 流式生命周期——新增 `openMessageItem` / `closeMessageItem` 消息项生命周期管理，持久 `outputItems` 追踪与正确 `output_index` 分配，`_itemClosed` 标志防止重复关闭事件，`toolCallNames` / `toolOutputIndices` 工具调用追踪，所有文本 delta 事件包含 `item_id`、`output_index`、`content_index` 字段，`response.output_text.done` 事件使用完整 outputItems 列表。移除裸路径归一化（客户端应使用标准 `/v1/...` 路径）。
 - **2026-08-12 更新弹窗安全提示展示时机与备份清单微调**：安全升级步骤改为仅在 GitHub 存在新版本时展示；本机已是最新或来源未知时，弹窗只显示“一键升级已禁用，避免覆盖本地代码、配置或运行状态。”单句提示。备份步骤明确列出 `keys.json`（可能含 API Key 与上游地址等敏感信息，禁止上传到 GitHub/Release 或公开），与 `config.json`、`state.json` 一并备份。中英文翻译键同步更新。

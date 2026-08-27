@@ -106,7 +106,12 @@ Point an OpenAI-compatible client at `http://localhost:3456/v1`. Add groups such
 
 ## Evolution
 
-This timeline records every tagged release from `v2.26.0` through `v2.58.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+This timeline records every tagged release from `v2.26.0` through `v2.59.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+
+### v2.59.0 🛡️ unsupported_path error classification protects shared keys
+- 🇬🇧 **English:** Added `unsupported_path` error classification: when an upstream rejects a request because the path/protocol is unsupported (e.g. anytokens' `does not allow /v1/messages dispatch`), the error is returned to the caller unchanged but is never written to the Key's `failCode`, so the key is not cooled down, locked, or judged invalid — other tasks sharing the key (local codex, LAN devices) keep working unaffected.
+- 🇨🇳 **中文：** 新增 `unsupported_path` 错误分类：上游因路径/协议不支持而拒绝请求时（如 anytokens 的 `does not allow /v1/messages dispatch`），错误如实回传调用方，但**不写入 Key 的 `failCode`**，不冷却、不锁定、不判失效——共享该 Key 的其他任务（本机 codex、局域网设备）不受影响。
+- 🔗 [Full changelog](README_CN.md#更新日志)
 
 ### v2.58.0 📡 Responses SSE streaming protocol compliance
 - 🇬🇧 **English:** Major overhaul of Responses SSE streaming lifecycle: added proper `output_item.added` / `output_item.done` message item lifecycle with `openMessageItem` / `closeMessageItem`, persistent `outputItems` tracking with correct `output_index` assignment, `_itemClosed` flag to prevent duplicate close events, `toolCallNames` / `toolOutputIndices` for tool call tracking, and `item_id` / `output_index` / `content_index` fields in all text delta events. Bare path normalization removed; clients should use standard `/v1/...` paths.

@@ -2853,6 +2853,12 @@ function classifyUpstreamErrorMessage(message) {
   if (/model (not found|does not exist|is not supported|is not available|not allowed)|no such model|unknown model|model_not_found|model_does_not_exist|invalid model|model .*doesn'?t exist|is not a valid model|model .*not found|does not support.*model|unsupported model|not supported by this model/i.test(text)) return "model_not_found";
   if (/capacity|at capacity|overloaded|busy|try a different model|not currently available/i.test(text)) return "model_at_capacity";
   if (/quota|insufficient|billing|billing_hard_limit|_limit_exceeded|usage limit|usage_limit|daily limit|weekly limit|monthly limit/i.test(text)) return "insufficient_quota";
+  // The upstream rejected the request path/protocol (not the key). e.g.
+  // anytokens returns "This group does not allow /v1/messages dispatch"
+  // when an Anthropic Messages request is sent to an OpenAI-only group.
+  // This is a request-shape problem, not a key problem: the caller's
+  // protocol is unsupported, so the error must NOT cool the shared key.
+  if (/does not allow|not allowed to (access|use)|not permitted|dispatch|path not supported|endpoint not supported|forbidden (path|route|endpoint)|unsupported (path|endpoint|protocol)|protocol not (allowed|supported)|method not (allowed|supported)|invalid path/i.test(text)) return "unsupported_path";
   return "upstream_api_error";
 }
 
@@ -5449,6 +5455,18 @@ function markStreamTerminalFailure(idx, lifecycle, clientCancelled) {
 function markFailure(idx, code, reason) {
   const ks = getKeyState(idx);
   const acct = accounts[idx];
+  if (reason === "unsupported_path") {
+    // Upstream rejected the request path/protocol — not a key failure. Record
+    // lastStatus for visibility but never set failCode / cooldown, so this
+    // error cannot poison shared keys used by other tasks. Note: reset=never
+    // keys cool as soon as failCode is set (inCooldown), so skipping failCode
+    // is what keeps them usable.
+    ks.lastStatus = code;
+    ks.lastTime = Date.now();
+    saveState();
+    broadcastStatus();
+    return;
+  }
   const curr = keyPeriod(acct.reset, idx);
 
   if (acct.reset !== "never") {
@@ -6382,9 +6400,15 @@ function forwardRequest(idx, method, headers, body, clientRes, pathname, onDone,
         // key is not the problem, so leave it untouched and let the caller fail
         // fast (optionally retrying a DIFFERENT upstream URL).
         const isModelLevel = reason === "model_not_found";
+        const isUnsupportedPath = reason === "unsupported_path";
         activeDecr(idx);
         if (isModelLevel) {
           // No markFailure, no capacity backoff: the key stays healthy.
+        } else if (isUnsupportedPath) {
+          // Upstream rejected the request path/protocol — the request shape is
+          // at fault, not the key. Fail fast and return the upstream error to
+          // the caller, but leave the shared key untouched so other tasks
+          // (local codex, LAN devices) keep working unaffected.
         } else if (isCapacity) {
           markCapacityBackoff(idx);
         } else if (isServerError) {

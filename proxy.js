@@ -10102,7 +10102,7 @@ function doImportKeys(){
   let added=0,skipped=0;
   for(const line of lines){
     const parts=line.trim().split(/\\s+/);
-    if(!parts[0]||!parts[0].startsWith("sk-")){skipped++;continue}
+    if(!parts[0]){skipped++;continue}
     const key=parts[0];
     if(!parts[1]||!parts[1].startsWith("http")){skipped++;continue}
     const url=parts[1];
@@ -15091,7 +15091,7 @@ function createGroupServer(groupName, port) {
           if (!Array.isArray(arr)) throw new Error("must be an array");
           for (const k of arr) {
             if (!k.key || !k.url) throw new Error("each entry needs key + url");
-            if (!k.key.startsWith("sk-")) throw new Error("key must start with sk-");
+            if (!k.key) throw new Error("key is required");
           }
           const raw = JSON.stringify(arr, null, 2);
           fs.writeFileSync(KEYS_FILE, raw, "utf-8");

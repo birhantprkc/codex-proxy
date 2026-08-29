@@ -716,6 +716,16 @@ Webhook URL、价格参数、桌面通知/声音开关、🔄 自动恢复冷却
 
 不支持（丢弃）：`include`、`previous_response_id`、`store`
 
+#### Messages→Chat 工具调用链（Claude Code CLI 多轮工具循环）
+
+`/v1/messages`（Claude Code CLI）→ Chat 上游时，工具调用**多轮往返**（第一轮机调 → 携带 `tool_result` 的第二轮请求）依赖请求方向转换完整保留工具上下文。请求方向转换器会将 Anthropic 内容块映射为 OpenAI Chat 消息：
+
+- assistant 消息中的 `tool_use` 块 → 合并为同一条 assistant 消息的 `tool_calls` 数组（`{id, type:"function", function:{name, arguments:JSON(input)}}`），文本块保留为 `content`；纯工具调用的 assistant 消息 `content` 置 `null`
+- user 消息中的 `tool_result` 块 → 转为紧邻其后的 `role:"tool"` 消息（`{tool_call_id, content}`），**不会残留空白 `role:"user"` 消息**，保证 `assistant(tool_calls) → tool` 顺序合法
+- `tool_choice` 映射：`{type:"any"}` → `"required"`，`{type:"tool", name}` → `{type:"function", function:{name}}`，字符串原样透传
+
+因此 Claude Code CLI（下游 Messages）经本代理使用任意 Chat 上游（如仅支持 OpenAI 协议的中继）时，工具定义、模型发起的工具调用、以及工具执行结果都能在后续轮次正确传给上游，工具循环不会断裂。
+
 ### /__status 字段说明
 
 | 字段 | 类型 | 说明 |
@@ -1567,6 +1577,8 @@ A: 未修改的官方 Release 资产会自动识别版本；源码安装（克�
 | [@anupamme](https://github.com/anupamme) | 提出管理 Token 不应保存于浏览器会话存储的安全改进思路（PR [#1](https://github.com/aipayim/codex-proxy/pull/1)）。当前版本在最新代码上完成了内存态适配，并补齐 WebSocket 认证路径。 |
 
 ## 更新日志
+
+- **2026-08-29 修复 Messages→Chat 工具调用链断裂（Claude Code CLI）**：`/v1/messages`（Claude Code CLI）→ Chat 上游时，请求方向转换此前会**丢弃 assistant 消息中的 `tool_use` 块与 user 消息中的 `tool_result` 块**——第一轮的模型工具调用能正常送达（响应方向 `chat_to_messages_sse` 正确转为 `tool_use`），但第二轮起携带工具执行结果的请求会把工具上下文完全抹掉，导致上游看不到工具调用与结果、工具循环断裂。现请求方向转换器完整保留工具上下文：`tool_use` → assistant `tool_calls`（文本保留，纯工具调用 `content` 置 `null`）、`tool_result` → `role:"tool"` 消息，且**不再残留空白 `content:""` 的 user 消息**（旧实现会多输出一条空 user 消息并破坏 `assistant(tool_calls) → tool` 顺序，部分 OpenAI 兼容上游会因此异常），保证多轮工具往返合法。另修正 `tool_choice` 映射：Anthropic `{type:"any"}` → OpenAI `"required"`、`{type:"tool",name}` → `{type:"function",function:{name}}`（此前仅取 `.type` 生成非法值）。更新 README 协议转换说明并新增回归断言（tool_calls 结构、无空 user 消息、tool 紧跟 assistant、tool_choice 映射）。
 
 - **2026-08-27 上游路径/协议不支持不再影响 Key 状态**：上游返回「路径/协议不支持」类错误（如 anytokens 的 `does not allow /v1/messages dispatch`，常见于局域网其他设备或本机应用用 Anthropic Messages 协议请求仅支持 OpenAI 协议的上游）时，代理新增 `unsupported_path` 错误分类。这类错误不再调用 `markFailure` 写入 `failCode`，因此不会使 Key 进入冷却、不会触发自动锁定，也不会让 `reset:"never"` 的 Key 被误判失效——共享 Key 的其他正常任务不受影响。请求仍如实转发、上游错误原样回传给调用方使其正确感知失败。真正的 Key 失效（401 认证失败、余额不足等）仍按原逻辑冷却与锁定。更新 FAQ 与协议转换说明。
 

@@ -213,12 +213,15 @@ function testProtocolIdentification(t) {
   ]);
   t.clearCache();
   assert.strictEqual(t.upstreamProtocolFor(0), "messages");
+  // api.openai.com is a static Responses-native host, so idx 1 is "responses";
+  // the relay host without cache falls back to "chat".
   assert.strictEqual(t.upstreamProtocolFor(1), "responses");
   assert.strictEqual(t.upstreamProtocolFor(2), "chat");
-  // Cached dynamic protocol is used for unknown hosts only.
+  // Cached dynamic protocol overrides the default for unknown hosts.
   t.upstreamModelsCache.set("https://relay.example/v1", { models: [], protocol: "messages", capability: "unknown", failed: true, fetchedAt: Date.now() });
   assert.strictEqual(t.upstreamProtocolFor(2), "messages");
   assert.strictEqual(t.upstreamProtocolFor(0), "messages", "static whitelist must win over cached protocol");
+  assert.strictEqual(t.upstreamProtocolFor(1), "responses", "static responses whitelist must win over cached protocol");
   console.log("matrix: upstream protocol identification (whitelist + cached dynamic): PASS");
 }
 
@@ -290,6 +293,29 @@ function testRequestConverters(t) {
   assert.strictEqual(mc.model, "claude-sonnet-4-5");
   assert.strictEqual(mc.tools[0].function.name, "get_weather");
   assert.strictEqual(mc.max_tokens, 200);
+
+  // Messages → Chat: tool_use must become assistant tool_calls
+  const mcAssistant = mc.messages.find(m => m.role === "assistant");
+  assert.ok(mcAssistant && Array.isArray(mcAssistant.tool_calls), "assistant must carry tool_calls");
+  assert.strictEqual(mcAssistant.tool_calls[0].function.name, "get_weather");
+  assert.strictEqual(JSON.parse(mcAssistant.tool_calls[0].function.arguments).city, "bj");
+  assert.strictEqual(mcAssistant.content, "ok");
+  // Messages → Chat: tool_result must become a role:"tool" message
+  const mcTool = mc.messages.find(m => m.role === "tool");
+  assert.ok(mcTool, "tool_result must produce a role:'tool' message");
+  assert.strictEqual(mcTool.tool_call_id, "toolu_1");
+  assert.strictEqual(mcTool.content, "sunny");
+  // Messages → Chat: no empty-content user message artifact, tool must follow assistant directly
+  const mcStrings = mc.messages.map(m => JSON.stringify(m));
+  assert.ok(!mcStrings.some(s => s.includes('"role":"user"') && s.includes('"content":""')), "must not emit an empty user message for tool_result turn");
+  const mcAsstIdx = mc.messages.findIndex(m => m.role === "assistant" && Array.isArray(m.tool_calls));
+  const mcToolIdx = mc.messages.findIndex(m => m.role === "tool");
+  assert.ok(mcAsstIdx >= 0 && mcToolIdx === mcAsstIdx + 1, "role:'tool' must immediately follow the assistant tool_calls message");
+  // Messages → Chat: tool_choice "any" → "required"
+  const mcAny = t.messagesToChatRequest("", { ...msgsReq, tool_choice: { type: "any" } });
+  assert.strictEqual(mcAny.tool_choice, "required");
+  const mcToolChoice = t.messagesToChatRequest("", { ...msgsReq, tool_choice: { type: "tool", name: "get_weather" } });
+  assert.strictEqual(mcToolChoice.tool_choice.function.name, "get_weather");
 
   // Messages → Responses
   const mr = t.messagesToResponsesRequest("", msgsReq);

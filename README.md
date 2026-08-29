@@ -106,7 +106,12 @@ Point an OpenAI-compatible client at `http://localhost:3456/v1`. Add groups such
 
 ## Evolution
 
-This timeline records every tagged release from `v2.26.0` through `v2.59.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+This timeline records every tagged release from `v2.26.0` through `v2.60.0`. Each entry intentionally keeps an English and Chinese explanation together so the public landing page remains English-first without losing release context for Chinese readers.
+
+### v2.60.0 🔧 Messages→Chat tool-call chain fix (Claude Code CLI)
+- 🇬🇧 **English:** Fixed the broken tool-call chain when `/v1/messages` (Claude Code CLI) forwards to a Chat upstream: the request-direction converter now preserves full tool context by mapping `tool_use` → assistant `tool_calls`, `tool_result` → `role:"tool"` messages, removing the stray empty `user` message, and mapping `tool_choice` correctly (`any` → `"required"`, `tool` → `function`), so multi-turn tool loops never break.
+- 🇨🇳 **中文：** 修复 `/v1/messages`（Claude Code CLI）→ Chat 上游时工具调用链断裂：请求方向转换器现完整保留工具上下文，`tool_use` → assistant `tool_calls`、`tool_result` → `role:"tool"` 消息，移除残留空白 user 消息，并正确映射 `tool_choice`（`any` → `"required"`、`tool` → `function`），多轮工具循环不再断裂。
+- 🔗 [Full changelog](README_CN.md#更新日志)
 
 ### v2.59.0 🛡️ unsupported_path error classification protects shared keys
 - 🇬🇧 **English:** Added `unsupported_path` error classification: when an upstream rejects a request because the path/protocol is unsupported (e.g. anytokens' `does not allow /v1/messages dispatch`), the error is returned to the caller unchanged but is never written to the Key's `failCode`, so the key is not cooled down, locked, or judged invalid — other tasks sharing the key (local codex, LAN devices) keep working unaffected.

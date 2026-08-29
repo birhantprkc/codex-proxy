@@ -12886,6 +12886,7 @@ function messagesToChatRequest(upstreamUrl, body) {
   if (Array.isArray(body.messages)) {
     for (const m of body.messages) {
       let content = "";
+      let toolCalls = null;
       if (typeof m.content === "string") {
         content = m.content;
       } else if (Array.isArray(m.content)) {
@@ -12900,8 +12901,18 @@ function messagesToChatRequest(upstreamUrl, body) {
           } else if (c.type === "thinking") {
             // Embed thinking text; forwardRequest will handle per-provider
             blocks.push({ type: "text", text: `【thinking】${c.thinking || ""}【/thinking】` });
-          } else if (c.type === "tool_use" || c.type === "tool_result") {
-            // handled separately via tool_calls/tool messages
+          } else if (c.type === "tool_use") {
+            if (!toolCalls) toolCalls = [];
+            toolCalls.push({
+              id: c.id || `call_${Date.now().toString(36)}_${toolCalls.length}`,
+              type: "function",
+              function: {
+                name: c.name || "",
+                arguments: typeof c.input === "object" ? JSON.stringify(c.input || {}) : String(c.input || "")
+              }
+            });
+          } else if (c.type === "tool_result") {
+            // handled below as a role: "tool" message
           }
         }
         if (blocks.length === 0) {
@@ -12912,7 +12923,21 @@ function messagesToChatRequest(upstreamUrl, body) {
           content = blocks;
         }
       }
-      chatBody.messages.push({ role: m.role === "assistant" ? "assistant" : "user", content });
+      const toolResults = Array.isArray(m.content) ? m.content.filter(c => c.type === "tool_result") : [];
+      if (m.role === "assistant" && toolCalls) {
+        chatBody.messages.push({ role: "assistant", content: content || null, tool_calls: toolCalls });
+      } else if (toolResults.length > 0 && (content === "" || (Array.isArray(content) && content.length === 0))) {
+        // user turn carried only tool results — emit role:"tool" messages below, no empty user message
+      } else {
+        chatBody.messages.push({ role: m.role === "assistant" ? "assistant" : "user", content });
+      }
+      for (const c of toolResults) {
+        const toolContent = typeof c.content === "string" ? c.content
+          : Array.isArray(c.content) ? c.content.map(x => x.text || x.source?.data || "").join("\n")
+          : typeof c.content === "object" ? JSON.stringify(c.content || "")
+          : String(c.content || "");
+        chatBody.messages.push({ role: "tool", tool_call_id: c.tool_use_id, content: toolContent });
+      }
     }
   }
   if (body.tools) {
@@ -12921,7 +12946,18 @@ function messagesToChatRequest(upstreamUrl, body) {
       function: { name: t.name, description: t.description || "", parameters: t.input_schema || {} }
     }));
   }
-  if (body.tool_choice) chatBody.tool_choice = body.tool_choice.type || "auto";
+  if (body.tool_choice) {
+    const tc = body.tool_choice;
+    if (typeof tc === "string") {
+      chatBody.tool_choice = tc;
+    } else if (tc.type === "any") {
+      chatBody.tool_choice = "required";
+    } else if (tc.type === "tool") {
+      chatBody.tool_choice = { type: "function", function: { name: tc.name } };
+    } else {
+      chatBody.tool_choice = tc.type || "auto";
+    }
+  }
   if (body.metadata) chatBody.metadata = body.metadata;
   if (body.stop_sequences) chatBody.stop = body.stop_sequences;
   if (body.temperature !== undefined) chatBody.temperature = body.temperature;

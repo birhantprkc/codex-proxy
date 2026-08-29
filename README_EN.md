@@ -588,6 +588,16 @@ Different-protocol (Chat / Messages / Responses) upstreams can coexist freely, n
 
 Not supported (dropped): `include`, `previous_response_id`, `store`
 
+### Messages→Chat tool-call chain (Claude Code CLI multi-turn tool loop)
+
+When `/v1/messages` (Claude Code CLI) forwards to a Chat upstream, the **multi-turn round trip** of tool calls (first turn model tool call → second turn carrying `tool_result`) depends on the request-direction converter fully preserving tool context. The request-direction converter maps Anthropic content blocks to OpenAI Chat messages:
+
+- `tool_use` blocks in assistant messages → merged into a `tool_calls` array on the same assistant message (`{id, type:"function", function:{name, arguments:JSON(input)}}`), text blocks kept as `content`; a pure-tool-call assistant message sets `content` to `null`
+- `tool_result` blocks in user messages → converted to a `role:"tool"` message immediately after (`{tool_call_id, content}`), **leaving no empty `role:"user"` message**, so the `assistant(tool_calls) → tool` ordering stays valid
+- `tool_choice` mapping: `{type:"any"}` → `"required"`, `{type:"tool", name}` → `{type:"function", function:{name}}`, plain strings pass through unchanged
+
+So when Claude Code CLI (downstream Messages) uses this proxy with any Chat upstream (e.g. an OpenAI-only relay), tool definitions, model-issued tool calls, and tool execution results are all passed to the upstream correctly in later turns — the tool loop never breaks.
+
 ### /__status Field Reference
 
 | Field | Type | Description |
@@ -1434,6 +1444,8 @@ This section collects reviewed public contributions, issue reports, and design s
 | [@anupamme](https://github.com/anupamme) | proposed the security improvement that the admin Token should not be stored in browser session storage (PR [#1](https://github.com/aipayim/codex-proxy/pull/1)). Current version implements the in-memory adaptation on the latest code and completes the WebSocket auth path. |
 
 ## Changelog
+
+- **2026-08-29 Fixed Messages→Chat tool-call chain break (Claude Code CLI)**: when `/v1/messages` (Claude Code CLI) forwards to a Chat upstream, the request-direction converter previously **dropped `tool_use` blocks from assistant messages and `tool_result` blocks from user messages** — first-round model tool calls arrived fine (the response direction `chat_to_messages_sse` correctly converts to `tool_use`), but from the second round onward requests carrying tool execution results had their tool context completely wiped, so the upstream never saw the calls or results and the tool loop broke. The request-direction converter now fully preserves tool context: `tool_use` → assistant `tool_calls` (text kept, pure-tool-call `content` set to `null`), `tool_result` → `role:"tool"` message, and it **no longer leaves an empty `content:""` user message** (the old implementation emitted a stray empty user message that broke the `assistant(tool_calls) → tool` ordering, which some OpenAI-compatible upstreams reject), keeping multi-turn tool round trips valid. Also fixed the `tool_choice` mapping: Anthropic `{type:"any"}` → OpenAI `"required"`, `{type:"tool",name}` → `{type:"function",function:{name}}` (previously it only took `.type`, producing an invalid value). Updated the README protocol-conversion docs and added regression assertions (tool_calls structure, no empty user message, tool directly after assistant, tool_choice mapping).
 
 - **2026-08-27 Upstream path/protocol-not-supported errors no longer affect Key state**: when the upstream returns a "path/protocol not supported" error (e.g. anytokens' `does not allow /v1/messages dispatch`, common when LAN devices or local apps send Anthropic Messages requests to an OpenAI-only upstream), the proxy now classifies it as `unsupported_path`. Such errors no longer call `markFailure` to write `failCode`, so the key does not enter cooldown, is not auto-locked, and a `reset:"never"` key is not wrongly judged invalid — other healthy tasks sharing the key are unaffected. The request is still forwarded faithfully and the upstream error is returned to the caller so it correctly sees the failure. Real key failures (401 auth failure, insufficient balance, etc.) still cool down and lock as before. FAQ and protocol-conversion docs updated.
 

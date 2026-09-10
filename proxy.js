@@ -280,6 +280,7 @@ const slidingWindows = {};
 const pathStats = {};
 let requestQueue = [];
 let queueProcessing = false;
+let drainPending = false;
 const INSTANCE_ID = crypto.randomUUID();
 const INSTANCE_STARTED_AT = Date.now();
 let restartState = { phase: "ready", startedAt: null, id: "", cancelledQueuedRequests: 0, warned: false };
@@ -5762,8 +5763,17 @@ function enqueueRequest(method, headers, body, clientRes, pathname, group, extra
   requestQueue.push({ method, headers, body, clientRes, pathname, group, time: Date.now(), extraTransform, failureContext: failureContext || null, capacity: capacity === true, proto: proto || null });
   console.log(`[proxy] Queue depth: ${requestQueue.length}`);
   // Drain promptly so queued requests reach the 503 max-wait path instead of
-  // lingering until the next backoff timer or an hourly sweep.
-  setImmediate(() => { try { processQueue(); } catch (e) {} });
+  // lingering until the next backoff timer or an hourly sweep.  Guard against
+  // re-entrant storms: when no key is available every queued request re-enqueues
+  // through forwardProtocolAware/forwardRequest, and each enqueue must not
+  // schedule another drain before the previous one has run.
+  if (!drainPending) {
+    drainPending = true;
+    setImmediate(() => {
+      try { processQueue(); } catch (e) {}
+      finally { drainPending = false; }
+    });
+  }
   clientRes.on("close", () => {
     const i = requestQueue.findIndex(r => r.clientRes === clientRes);
     if (i >= 0) { requestQueue.splice(i, 1); if (!clientRes.destroyed) clientRes.destroy(); }

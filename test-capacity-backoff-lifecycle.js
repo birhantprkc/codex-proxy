@@ -208,7 +208,7 @@ function testSourceContracts(proxyDir) {
   assert.match(source, /parseInt\(c\.capacityMaxWaitSeconds\) \|\| 300/);
   assert.match(source, /quota\|insufficient\|billing\|billing_hard_limit\|_limit_exceeded\|usage limit\|usage_limit\|daily limit\|weekly limit\|monthly limit/, "classifier must recognize quota/usage-limit wording");
   assert.doesNotMatch(source, /\|limit exceeded\|/, "generic rate-limit wording must not be treated as quota");
-  assert.match(source, /setImmediate\(\(\) => \{ try \{ processQueue\(\); \} catch \(e\) \{\} \}\)/, "enqueueRequest must drain promptly");
+  assert.match(source, /if \(!drainPending\)[\s\S]{0,200}setImmediate\([\s\S]{0,200}processQueue\(\)/, "enqueueRequest must drain promptly");
   assert.match(source, /processQueue\(\); \} catch \(e\) \{\} \}, 5000/, "a steady queue drain timer must exist");
   assert.doesNotMatch(source, /requestQueue\.filter\(r => r\.time > qcut/, "stale queue entries must not be silently dropped");
 }
